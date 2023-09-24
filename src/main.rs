@@ -1,6 +1,9 @@
-use colored::*;
+use std::time::Instant;
 
-#[derive(Copy,Clone)]
+use colored::*;
+use rand::Rng;
+
+#[derive(Copy,Clone,Debug)]
 pub struct Board {
     r0:u32, //every nibble in the u32 corresponds to the xth from the left:
     r1:u32, //0000: Nothing (0x0)
@@ -13,7 +16,11 @@ pub struct Board {
     r8:u32,
     r9:u32,
     r10:u32,
-    heights:u32 //each nibble is the height of 
+    heights:u32, //each nibble is the height of 
+    white_pixels_left:u8,
+    purple_pixels_left:u8,
+    green_pixels_left:u8,
+    yellow_pixels_left:u8
 }
 
 impl Board {
@@ -31,23 +38,10 @@ impl Board {
             r9:0,
             r10:0,
             heights:0,
-        }
-    }
-
-    fn ones() -> Moves {
-        Self {
-            r0:0xFFFFFFFF,
-            r1:0xFFFFFFFF,
-            r2:0xFFFFFFFF,
-            r3:0xFFFFFFFF,
-            r4:0xFFFFFFFF,
-            r5:0xFFFFFFFF,
-            r6:0xFFFFFFFF,
-            r7:0xFFFFFFFF,
-            r8:0xFFFFFFFF,
-            r9:0xFFFFFFFF,
-            r10:0xFFFFFFFF,
-            heights:0xFFFFFFFF,
+            white_pixels_left:30,
+            purple_pixels_left:5,
+            green_pixels_left:5,
+            yellow_pixels_left:5
         }
     }
 
@@ -66,9 +60,9 @@ impl Board {
             _ => &mut self.r10,
         }
     }
-
+    #[inline]
     fn get(&self, index:u32) -> u32 {
-         match index {
+        match index {
             0 => self.r0,
             1 => self.r1,
             2 => self.r2,
@@ -79,25 +73,38 @@ impl Board {
             7 => self.r7,
             8 => self.r8,
             9 => self.r9,
-            _ => self.r10,
+            10 => self.r10,
+            _ => 0
         }
     }
-}
 
-type Moves = Board; //Moves are represented the same way as Boards, except moves start initialized where all the allowed moves are one. 
-//Then, the bits that correspond to each move are flipped.
-//Ex- a move in the first cell would start as 1111.
-//If white placement wasnt allowed, it would become 1110. 
-//If all color placements werent allowed, but white was, it would be 0001.
-//No moves in that cell is represented by 0000.
-//height field is available pieces
-//basically a union but not a union
+    fn apply_move(&mut self, m:Move) {
+        insert(self, m.column, m.color);
+    }
+}
 
 enum Pickle {
     White,
     Purple,
     Green,
     Yellow
+}
+
+impl Pickle {
+    fn to_u32(&self) -> u32 {
+        match self {
+            Pickle::White => 1,
+            Pickle::Purple => 3,
+            Pickle::Green => 5,
+            Pickle::Yellow => 9
+        }
+    }
+}
+
+#[derive(Debug,Clone, Copy)]
+struct Move {
+    column:u32,
+    color:u32
 }
 
 fn make_board(pickles:Vec<(u32,u32,Pickle)>) -> Board {
@@ -111,33 +118,18 @@ fn make_board(pickles:Vec<(u32,u32,Pickle)>) -> Board {
 }
 
 fn make_row(x:u32,pickle:Pickle) -> u32 {
-    let mut r:u32 = match pickle {
-        Pickle::White => 1,
-        Pickle::Purple => 3,
-        Pickle::Green => 5,
-        Pickle::Yellow => 9
-    };
+    let mut r:u32 = pickle.to_u32();
     r = r << (x*4);
     r
 }
 
-// pub fn elim_illegal_moves(board:&Board,moves:&mut Moves) {
-    
-// }
-
-// const mosaic_colors:[u32; 9] = [0x333,0x555,0x999,0x359,0x593,0x935, 0x395,0x953,0x539];
-// const mosaic_colors_2:[u8; 6] = [0x33,0x55,0x99,0x59,0x93,0x39,0x95,0x53]; 
+//PROCESSING
 
 pub fn elim_mosaic_breaking_moves(x:u32,y:u32,board:&Board) -> u32 {
-    let mut r0 = if y<10 { board.get(y+1) } else { 0 };
+    let mut r0 = board.get(y+1);
     let mut r1 = board.get(y);
-    let mut r2 = if y>0 { board.get(y-1) } else { 0 };
-    let mut r3 = if y>1 { board.get(y-2) } else { 0 };
-
-    println!("r0: {:#016x}",r0);
-    println!("r1: {:#016x}",r1);
-    println!("r2: {:#016x}",r2);
-    println!("r3: {:#016x}",r3);
+    let mut r2 = board.get(y-1);
+    let mut r3 = board.get(y-2);
 
     //shift on a unsigned integer is a logical shift, so bits will be deleted.
     let mask0:u32 = 0x0000FFFFu32;
@@ -145,15 +137,15 @@ pub fn elim_mosaic_breaking_moves(x:u32,y:u32,board:&Board) -> u32 {
     let mask2:u32 = 0x00000FFFu32;
     
     if x>2 { 
-        r0 = r0 >> (x-2);
-        r1 = r1 >> (x-2);
-        r2 = r2 >> (x-2);
-        r3 = r3 >> (x-2);
+        r0 = r0 >> (x-2)*4;
+        r1 = r1 >> (x-2)*4;
+        r2 = r2 >> (x-2)*4;
+        r3 = r3 >> (x-2)*4;
     } else if x<2 { 
-        r0 = r0 << (2-x);
-        r1 = r1 << (2-x);
-        r2 = r2 << (2-x);
-        r3 = r3 << (2-x);
+        r0 = r0 << (2-x)*4;
+        r1 = r1 << (2-x)*4;
+        r2 = r2 << (2-x)*4;
+        r3 = r3 << (2-x)*4;
     }
 
     r3 = r3 >> 4;
@@ -163,14 +155,7 @@ pub fn elim_mosaic_breaking_moves(x:u32,y:u32,board:&Board) -> u32 {
         r2 = r2 >> 4;
     }
 
-    println!("r0: {:#016x}",r0);
-    println!("r1: {:#016x}",r1);
-    println!("r2: {:#016x}",r2);
-    println!("r3: {:#016x}",r3);
-
     let working:u64 = (mask0 & r0) as u64 | (((mask1 & r1) as u64) << 4*4) | (((mask0 & r2) as u64) << 9*4) | (((mask2 & r3) as u64) << 13*4);
-
-    println!("Working: {:#018x}",working);
 
     //x,y is the last pixel to complete a mosaic
     let v1_and_0:u64 =    0xEEE_E00E_0E0E0_0000;
@@ -188,7 +173,6 @@ pub fn elim_mosaic_breaking_moves(x:u32,y:u32,board:&Board) -> u32 {
     if v1_and_0 & working == 0 && v1_color_1 & working != 0 && v1_color_2 & working != 0 {
         let color_1 = (working & v1_color_1) >> 11*4;
         let color_2 = (working & v1_color_2) >> 10*4;
-        println!("COLORS: {}, {}",color_1,color_2);
         let missing_color = if color_1 == color_2 { color_1 } else { 0xE - color_1 - color_2 };
         
         //make completing the mosaic the only legal move
@@ -213,13 +197,18 @@ pub fn elim_mosaic_breaking_moves(x:u32,y:u32,board:&Board) -> u32 {
         return missing_color as u32;
     }
     
-    let w1_and_0 = 0xEE0_E000_0E000_0000;
+    // x x x x
+    //x x 0 x x
+    // x x x x
+    //  x x x
+
+    let w1_and_0 = 0xEE0_E0E0_0E000_0000;
     let w1_color = 0x000_0E00_00000_0000;
 
     let w2_and_0 = 0x000_EE00_E0000_E000;
     let w2_color = 0x000_0000_0E000_0000;
     
-    let w3_and_0 = 0x0EE_0E0E_000EE_0000;
+    let w3_and_0 = 0x0EE_0E0E_000E0_0000;
     let w3_color = 0x000_00E0_00000_0000;
 
     let w4_and_0 = 0x000_00EE_0000E_000E;
@@ -231,21 +220,17 @@ pub fn elim_mosaic_breaking_moves(x:u32,y:u32,board:&Board) -> u32 {
     if w2_color & working != 0 { touching += 1; }
     if w3_color & working != 0 { touching += 1; }
     if w4_color & working != 0 { touching += 1; }
-    
-    println!("TOUCHING={}",touching);
 
     if touching > 1 {
         return 0x1;
     }
-
-    println!("w1={:#018x} {:#018x}",w1_and_0 & working,w1_color & working);
 
     //x,y is bordering a colored tile connected to another one already
     if (w1_and_0 & working != 0 && w1_color & working != 0) ||
     (w2_and_0 & working != 0 && w2_color & working != 0) ||
     (w3_and_0 & working != 0 && w3_color & working != 0) ||
     (w4_and_0 & working != 0 && w4_color & working != 0) {
-       return 0x1;
+        return 0x1;
     }
 
     //x,y has a colored tile under it but the 3rd space for mosaic is covered by white
@@ -257,8 +242,154 @@ pub fn elim_mosaic_breaking_moves(x:u32,y:u32,board:&Board) -> u32 {
         return 0x1;
     }
 
+    //x,y is bordering a singular colored one that itself is not surrounded by any colored pixels. therefore, this m-osaic should be continued.
+    if w1_color & working != 0 || w2_color & working != 0 || w3_color & working != 0 || w4_color & working != 0  {
+        return 0xE;
+    }
+
     return 0xF;
 
+}
+
+fn enforce_pixels_left(board:&Board, potential_move:u32) -> u32 {
+    let mut mask = if board.white_pixels_left != 0 { 0x1 } else { 0x0 };
+    if board.purple_pixels_left != 0 { mask += 0x2 };
+    if board.green_pixels_left != 0 { mask += 0x4 };
+    if board.yellow_pixels_left != 0 { mask += 0x8 };
+    // println!("{}",mask);
+    return potential_move & mask;
+}
+
+fn is_placeable(board:&Board, x:u32,y:u32) -> bool {
+    if y==0 { return x!=6;}
+    let below = board.get(y-1);
+    if y%2==1 {
+        if x==0 { return true; }
+        if x==1 { return below & 0x1 != 0; }
+        return (below >> ((x-1)*4)) & 0x1 != 0;
+    } else {
+        return ((below >> ((x+1)*4)) & 0x1 != 0) && x!=6;
+    }
+}
+
+static mut POSITIONS:u32 = 0;
+fn calc_score(board:&Board) -> f64 {
+    let mut pixel_count = 0;
+    let mut mosaic_count = 0;
+    let mut height_bonus = 0;
+    for y in 0..=10 {
+        for x in if y%2==0 { 0..=5 } else { 0..=6 } {
+            if (0xF << (x*4)) & board.get(y) != 0 {
+                pixel_count += 1;
+            }
+            
+            let working = if y%2 == 0 {
+                (right_signed(board.get(y-1) , (x)*4) & 0xFFF) as u64 |
+                ((right_signed(board.get(y) , (x-1)*4) & 0xFFFF) as u64) << (4*3) |
+                ((right_signed(board.get(y+1) , (x-1)*4) & 0xFFFF) as u64) << (4*7) |
+                ((right_signed(board.get(y+2) , (x-1)*4) & 0xFFF) as u64) << (4*11)
+            } else { 0 };
+            
+            println!("x:{},y:{}, working:{:016x}",x,y,working);
+        }
+    }
+    unsafe { POSITIONS += 1; }
+    return (pixel_count * 5) as f64;
+}
+
+fn right_signed(src:u32, rhs:i32) -> u32 {
+    if rhs >= 0 {
+        return src >> rhs;
+    } else {
+        return src << rhs;
+    }
+}
+
+fn find_moves(board:&Board, depth:u32) -> Vec<(Move,f64)> {
+    let mut moves:Vec<(Move,f64)> = Vec::new();
+
+    for x in 0..=6 {
+        let y = (board.heights & (0xF << x*4)) >> x*4;
+        let pixel = enforce_pixels_left(&board, if is_placeable(&board, x, y) { elim_mosaic_breaking_moves(x, y, &board) } else { 0});
+        
+        if pixel == 0 { continue; }
+        for (mask,res) in [(1,1),(2,3),(4,5),(8,9)] {
+            let mut moved_board = board.clone();
+            if mask & pixel != 0 { insert(&mut moved_board, x, res); } else { continue; }
+            let v = eval_partner_move(moved_board,depth-1);
+            moves.push((Move {column:x,color:res},v));
+        }
+    }
+
+    return moves;
+}
+
+fn eval_self_move(board:Board, depth:u32) -> f64 {
+    let mut max:f64 = -1.0;
+    if depth == 0 {
+        return calc_score(&board);
+    }
+
+    for x in 0..=6 {
+        let y = (board.heights & (0xF << x*4)) >> x*4;
+        let pixel = enforce_pixels_left(&board, if is_placeable(&board, x, y) { elim_mosaic_breaking_moves(x, y, &board) } else { 0});
+        if pixel == 0 { continue; }
+        for (mask,res) in [(1,1),(2,3),(4,5),(8,9)] {
+            let mut moved_board = board.clone();
+            if mask & pixel != 0 { insert(&mut moved_board, x, res); } else { continue; }
+            let v = eval_partner_move(moved_board,depth-1);
+            max = max.max(v);
+        }
+    }
+
+    if max == -1.0 {
+        return calc_score(&board);
+    }
+
+    return max;
+}
+
+fn eval_partner_move(board:Board, depth:u32) -> f64 {
+    if depth == 0 {
+        return calc_score(&board);
+    }
+
+    let mut average = -1.0;
+    let mut num_average = 0;
+    for x in 0..=6 {
+        let y = (board.heights & (0xF << x*4)) >> x*4;
+        if is_placeable(&board, x, y) && enforce_pixels_left(&board, 0x1) != 0 {
+            let mut moved_board = board.clone();
+            insert(&mut moved_board, x, 0x1);
+            let v = eval_self_move(moved_board, depth-1);
+            if num_average==0 { average = v; continue; }
+
+            average *= num_average as f64/(num_average+1) as f64;
+            average += v/(num_average+1) as f64;
+            num_average += 1;
+        }
+    }
+
+    if average == -1.0 {
+        return calc_score(&board);
+    }
+
+    return average;
+}
+
+fn insert(board:&mut Board, column:u32, pixel:u32) {
+    let mask = 0xF << column*4;
+    let height = (board.heights & mask) >> column*4;
+    let row = board.get_mut(height);
+    *row = *row | (pixel << column*4);
+    board.heights += (if column == 6 {0x2} else { 0x1 }) << column*4;
+    match pixel {
+        0x1 => board.white_pixels_left -= 1,
+        0x3 => board.purple_pixels_left -= 1,
+        0x5 => board.green_pixels_left -= 1,
+        0x9 => board.yellow_pixels_left -= 1,
+        _ => ()
+    }
 }
 
 //PRINTING STUFF
@@ -276,13 +407,13 @@ fn print_board(board:&Board) {
     }
 }
 
-fn print_moves(moves:&Moves) {
+fn print_moves(board:&Board) {
     for r in 0..11 {
         let padding = " ".repeat(PRINT_PADDING);
         let mut line = if r%2==0 { " ".repeat(PRINT_PADDING/2+2) } else { String::new() };
         let clen = if r%2==0 { 6 } else { 7 };        
         for c in 0..clen {
-            line = format!("{}{}{}",line,padding.clone(),get_column(moves.get(10-r), c));
+            line = format!("{}{}{}",line,padding.clone(),color_pixel_move(get_column(board.get(10-r), c)));
         }
         println!("{}",line);
     }
@@ -305,20 +436,108 @@ fn color_pixel(pixel:String) -> ColoredString {
     }
 }
 
-fn main() {
-    println!("Hello, world!");
-    // let pickles = vec![(1,1,Pickle::White),(2,1,Pickle::White),(3,1,Pickle::White),
-    // (4,2,Pickle::Purple),(1,2,Pickle::Purple),(2,2,Pickle::Purple),(3,2,Pickle::Purple),
-    // (0,3,Pickle::Green),(1,3,Pickle::Green),(3,3,Pickle::Green),(4,3,Pickle::Green),
-    // (1,4,Pickle::Yellow),(4,4,Pickle::Yellow)];
-
-    let pickles = vec![(1,2,Pickle::White),(2,1,Pickle::Green),(1,1,Pickle::White)];
-    let board = make_board(pickles);
-    let mut moves = Moves::ones();
-
-    let result = elim_mosaic_breaking_moves(2,2,&board);
+fn color_pixel_move(pixel:String) -> String {
+    return format!("{}{}{}{}",
+        if pixel.chars().nth(0) == Some('1') { String::from("1").yellow() } else { String::from("0").white() },
+        if pixel.chars().nth(1) == Some('1') { String::from("1").green() } else { String::from("0").white()},
+        if pixel.chars().nth(2) == Some('1') { String::from("1").purple() } else { String::from("0").white()},
+        if pixel.chars().nth(3) == Some('1') { String::from("1").on_white().black() } else { String::from("0").white()}
+    );
     
+    let mut res = String::new();
+    for (i,x) in pixel.chars().enumerate() {
+        if x =='1' {
+            let add = String::from("1");
+            res.push_str(& match i {
+                0 => add.yellow(),
+                1 => add.green(),
+                2 => add.purple(),
+                _ => add.white()
+            });
+        } else {
+            res.push_str("0");
+        }
+    }
+    return res;
+}
+
+
+pub fn main() {
+    let mut rng = rand::thread_rng();
+    let pickles = vec![];
+    let mut board = make_board(pickles);
+
+    insert(&mut board, 1, 0x1);
+    insert(&mut board, 1, 0x1);
+    insert(&mut board, 2, 0x1);
+    insert(&mut board, 2, 0x1);
+    insert(&mut board, 3, 0x1);
+    insert(&mut board, 3, 0x1);
+
+    insert(&mut board, 1, 0x3);
+    insert(&mut board, 2, 0x3);
+    insert(&mut board, 2, 0x3);
+
+    insert(&mut board, 4, 0x1);
+    insert(&mut board, 4, 0x1);
+    insert(&mut board, 3, 0x1);
+
+    insert(&mut board, 3, 0x5);
+    insert(&mut board, 1, 0x5);
+    insert(&mut board, 1, 0x5);
+    insert(&mut board, 2, 0x5);
+
+    // insert(&mut board, 0, 0x1);
+    // insert(&mut board, 0, 0x1);
+    // insert(&mut board, 1, 0x1);
+    // insert(&mut board, 1, 0x1);
+    // insert(&mut board, 2, 0x1);
+    // insert(&mut board, 2, 0x1);
+
+    // insert(&mut board, 0, 0x3);
+    // insert(&mut board, 1, 0x3);
+    // insert(&mut board, 1, 0x3);
+
+    // insert(&mut board, 3, 0x1);
+    // insert(&mut board, 3, 0x1);
+    // insert(&mut board, 2, 0x1);
+
+    // insert(&mut board, 2, 0x5);
+    // insert(&mut board, 0, 0x5);
+    // insert(&mut board, 0, 0x5);
+    // insert(&mut board, 1, 0x5);
+
     print_board(&board);
-    println!("{}","=".repeat(15*PRINT_PADDING));
-    println!("result is: {:04b}",result);
+
+    calc_score(&board);
+    return;
+
+    for x in 0..30 {
+        if x%2 == 0 {
+            unsafe { POSITIONS = 0; }
+            let instant = Instant::now();
+            let moves = find_moves(&board, 6);
+            unsafe { println!("Analyzed {} positions in {} ms",POSITIONS,instant.elapsed().as_millis()); }
+            let m = moves.iter().fold((Move {column:0,color:0},0.0), |acc,x| if x.1 > acc.1 { *x } else { acc });
+            board.apply_move(m.0);
+
+        } else {
+            let mut m = Move {
+                column: if ((board.heights & (0xF << (6*4))) >> (6*4)) % 2 == 0 { rng.gen_range(0..=6) } else {  rng.gen_range(0..=5) },
+                color:0x1
+            };
+
+            while ( !is_placeable(&board,m.column,(board.heights & (0xF << m.column*4)) >> m.column*4) ) {
+                m = Move {
+                    column: if ((board.heights & (0xF << (6*4))) >> (6*4)) % 2 == 0 { rng.gen_range(0..=6) } else {  rng.gen_range(0..=5) },
+                    color:0x1
+                };
+            }
+            board.apply_move(m);
+        }
+        print_board(&board);
+        println!("{}","=".repeat(15*4));
+    }
+
+    println!("{:#?}",find_moves(&board, 5));
 }
