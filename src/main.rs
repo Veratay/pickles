@@ -274,34 +274,73 @@ fn is_placeable(board:&Board, x:u32,y:u32) -> bool {
 
 static mut POSITIONS:u32 = 0;
 fn calc_score(board:&Board) -> f64 {
-    let mut pixel_count = 0;
-    let mut mosaic_count = 0;
-    let mut height_bonus = 0;
+    let mut score = 0;
     for y in 0..=10 {
         for x in if y%2==0 { 0..=5 } else { 0..=6 } {
             if (0xF << (x*4)) & board.get(y) != 0 {
-                pixel_count += 1;
+                score += 3;
             }
             
+            let and_0_1:u64 = 0x00_EE0_E0E0_E00E_EEE;
+            let mask_1:u64 =  0x00_000_0E00_0EE0_000;
+            let and_0_2:u64 = 0x00_EEE_E00E_0E0E_0EE;
+            let mask_2:u64=   0x00_000_0EE0_00E0_000;
+
+            let mask_1_color_1:u64 = 0x00_000_0E00_0000_000;
+            let mask_1_color_2:u64 = 0x00_000_0000_0E00_000;
+            let mask_1_color_3:u64 = 0x00_000_0000_00E0_000;
+
+            let mask_2_color_1:u64 =  0x00_000_0E00_0000_000;
+            let mask_2_color_2:u64 =  0x00_000_00E0_0000_000;
+            let mask_2_color_3:u64 =  0x00_000_0000_00E0_000;
+
             let working = if y%2 == 0 {
-                (right_signed(board.get(y-1) , (x)*4) & 0xFFF) as u64 |
+                ((board.get(y-1) >> (x*4)) & 0xFFF) as u64 |
                 ((right_signed(board.get(y) , (x-1)*4) & 0xFFFF) as u64) << (4*3) |
-                ((right_signed(board.get(y+1) , (x-1)*4) & 0xFFFF) as u64) << (4*7) |
-                ((right_signed(board.get(y+2) , (x-1)*4) & 0xFFF) as u64) << (4*11)
-            } else { 0 };
-            
-            println!("x:{},y:{}, working:{:016x}",x,y,working);
+                (((board.get(y+1) >> ((x)*4)) & 0xFFFF) as u64) << (4*7) |
+                (((board.get(y+2) >> (x*4)) & 0xFFF) as u64) << (4*11)
+            } else { 
+                ((right_signed(board.get(y-1) , (x-1)*4)) & 0xFFF) as u64 |
+                ((right_signed(board.get(y) , (x-1)*4) & 0xFFFF) as u64) << (4*3) |
+                ((right_signed(board.get(y+1) , ((x-2)*4)) & 0xFFFF) as u64) << (4*7) |
+                ((right_signed(board.get(y+2) , ((x-1)*4)) & 0xFFF) as u64) << (4*11)
+            };
+
+            if and_0_1 & working == 0 && mask_1 & working > 0x00_000_0200_0220_000  {
+                let color1 = (mask_1_color_1 & working) >> (9*4);
+                let color2 = (mask_1_color_2 & working) >> (5*4);
+                let color3 = (mask_1_color_3 & working) >> (4*4);
+
+                if (color1==color2 && color2==color3) || (0xE-color1-color2-color3) == 0 {
+                    // print_board(board);
+                    // println!("x:{},y:{}, working:{:016x}",x,y,working);
+                    score += 10;
+                }
+            }
+
+            if and_0_2 & working == 0 && mask_2 & working > 0x00_000_0220_0020_000 {
+                let color1 = (mask_2_color_1 & working) >> (9*4);
+                let color2 = (mask_2_color_2 & working) >> (8*4);
+                let color3 = (mask_2_color_3 & working) >> (4*4);
+
+                if (color1==color2 && color2==color3) || (0xE-color1-color2-color3) == 0 {
+                    // print_board(board);
+                    // println!("x:{},y:{}, working:{:016x}",x,y,working);
+                    score += 10;
+                }
+            }
         }
     }
     unsafe { POSITIONS += 1; }
-    return (pixel_count * 5) as f64;
+    return score as f64;
 }
 
+#[inline(always)]
 fn right_signed(src:u32, rhs:i32) -> u32 {
     if rhs >= 0 {
         return src >> rhs;
     } else {
-        return src << rhs;
+        return src << rhs.abs();
     }
 }
 
@@ -313,10 +352,10 @@ fn find_moves(board:&Board, depth:u32) -> Vec<(Move,f64)> {
         let pixel = enforce_pixels_left(&board, if is_placeable(&board, x, y) { elim_mosaic_breaking_moves(x, y, &board) } else { 0});
         
         if pixel == 0 { continue; }
-        for (mask,res) in [(1,1),(2,3),(4,5),(8,9)] {
+        for (mask,res) in [(2,3),(4,5),(8,9),(1,1)] {
             let mut moved_board = board.clone();
             if mask & pixel != 0 { insert(&mut moved_board, x, res); } else { continue; }
-            let v = eval_partner_move(moved_board,depth-1);
+            let v = eval_self_move(moved_board,depth-1);
             moves.push((Move {column:x,color:res},v));
         }
     }
@@ -330,14 +369,29 @@ fn eval_self_move(board:Board, depth:u32) -> f64 {
         return calc_score(&board);
     }
 
+    let mut mosaic_breaking:[u32; 7] = [0,0,0,0,0,0,0];
+
+    for (res,x) in mosaic_breaking.iter_mut().zip([0,1,2,3,4,5,6]) {
+        let y = (board.heights & (0xF << x*4)) >> x*4;
+        if is_placeable(&board, x, y) { 
+            let moves = enforce_pixels_left(&board, if is_placeable(&board, x, y) { elim_mosaic_breaking_moves(x, y, &board) } else { 0});
+            if moves == 0x3 || moves == 0x5 || moves == 0x9 {
+                let mut moved_board = board.clone(); 
+                insert(&mut moved_board, x, moves);
+                return if false { eval_partner_move(moved_board,depth-1) } else { eval_self_move(moved_board,depth-1)+5.0 };
+            }
+            *res = moves;
+        }
+    }
+
     for x in 0..=6 {
         let y = (board.heights & (0xF << x*4)) >> x*4;
-        let pixel = enforce_pixels_left(&board, if is_placeable(&board, x, y) { elim_mosaic_breaking_moves(x, y, &board) } else { 0});
+        let pixel = mosaic_breaking[x as usize];
         if pixel == 0 { continue; }
-        for (mask,res) in [(1,1),(2,3),(4,5),(8,9)] {
+        for (mask,res) in [(2,3),(4,5),(8,9),(1,1)] {
             let mut moved_board = board.clone();
-            if mask & pixel != 0 { insert(&mut moved_board, x, res); } else { continue; }
-            let v = eval_partner_move(moved_board,depth-1);
+            if mask & pixel != 0 { insert(&mut moved_board, x, res); } else { continue; };
+            let v = if false { eval_partner_move(moved_board,depth-1) } else { eval_self_move(moved_board,depth-1) };
             max = max.max(v);
         }
     }
@@ -361,7 +415,7 @@ fn eval_partner_move(board:Board, depth:u32) -> f64 {
         if is_placeable(&board, x, y) && enforce_pixels_left(&board, 0x1) != 0 {
             let mut moved_board = board.clone();
             insert(&mut moved_board, x, 0x1);
-            let v = eval_self_move(moved_board, depth-1);
+            let v = if depth%2==1 { eval_self_move(moved_board, depth-1) } else { eval_partner_move(board, depth-1)};
             if num_average==0 { average = v; continue; }
 
             average *= num_average as f64/(num_average+1) as f64;
@@ -467,57 +521,13 @@ pub fn main() {
     let pickles = vec![];
     let mut board = make_board(pickles);
 
-    insert(&mut board, 1, 0x1);
-    insert(&mut board, 1, 0x1);
-    insert(&mut board, 2, 0x1);
-    insert(&mut board, 2, 0x1);
-    insert(&mut board, 3, 0x1);
-    insert(&mut board, 3, 0x1);
-
-    insert(&mut board, 1, 0x3);
-    insert(&mut board, 2, 0x3);
-    insert(&mut board, 2, 0x3);
-
-    insert(&mut board, 4, 0x1);
-    insert(&mut board, 4, 0x1);
-    insert(&mut board, 3, 0x1);
-
-    insert(&mut board, 3, 0x5);
-    insert(&mut board, 1, 0x5);
-    insert(&mut board, 1, 0x5);
-    insert(&mut board, 2, 0x5);
-
-    // insert(&mut board, 0, 0x1);
-    // insert(&mut board, 0, 0x1);
-    // insert(&mut board, 1, 0x1);
-    // insert(&mut board, 1, 0x1);
-    // insert(&mut board, 2, 0x1);
-    // insert(&mut board, 2, 0x1);
-
-    // insert(&mut board, 0, 0x3);
-    // insert(&mut board, 1, 0x3);
-    // insert(&mut board, 1, 0x3);
-
-    // insert(&mut board, 3, 0x1);
-    // insert(&mut board, 3, 0x1);
-    // insert(&mut board, 2, 0x1);
-
-    // insert(&mut board, 2, 0x5);
-    // insert(&mut board, 0, 0x5);
-    // insert(&mut board, 0, 0x5);
-    // insert(&mut board, 1, 0x5);
-
-    print_board(&board);
-
-    calc_score(&board);
-    return;
-
-    for x in 0..30 {
-        if x%2 == 0 {
+    for x in 0..45 {
+        if true {
             unsafe { POSITIONS = 0; }
             let instant = Instant::now();
-            let moves = find_moves(&board, 6);
+            let moves = find_moves(&board, 7);
             unsafe { println!("Analyzed {} positions in {} ms",POSITIONS,instant.elapsed().as_millis()); }
+            println!("{:#?}",moves);
             let m = moves.iter().fold((Move {column:0,color:0},0.0), |acc,x| if x.1 > acc.1 { *x } else { acc });
             board.apply_move(m.0);
 
@@ -536,6 +546,7 @@ pub fn main() {
             board.apply_move(m);
         }
         print_board(&board);
+        println!("score = {}", calc_score(&board));
         println!("{}","=".repeat(15*4));
     }
 
